@@ -253,8 +253,26 @@ function TasksApp({ auth, theme, setTheme }) {
     setConnection('conectado')
   }
 
+  async function acceptInviteFromUrl() {
+    const token = new URLSearchParams(window.location.search).get('invite')
+    if (!token) return
+
+    const { error } = await supabase.rpc('accept_workspace_invitation', { invite_token: token })
+    if (error) {
+      alert(`No se pudo aceptar la invitación: ${error.message}`)
+      return
+    }
+
+    window.history.replaceState({}, document.title, window.location.pathname)
+  }
+
   useEffect(() => {
-    loadWorkspaces()
+    async function boot() {
+      await acceptInviteFromUrl()
+      await loadWorkspaces()
+    }
+
+    boot()
   }, [])
 
   useEffect(() => {

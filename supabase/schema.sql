@@ -237,6 +237,43 @@ as $$
   select workspace_id from public.tasks where id = target_task_id;
 $$;
 
+create or replace function public.accept_workspace_invitation(invite_token uuid)
+returns uuid
+security definer
+set search_path = public
+language plpgsql
+as $$
+declare
+  invitation_record public.invitations%rowtype;
+  current_email text;
+begin
+  select coalesce(auth.jwt()->>'email', '') into current_email;
+
+  select *
+  into invitation_record
+  from public.invitations
+  where token = invite_token
+    and status = 'pending'
+    and expires_at > now()
+    and lower(email) = lower(current_email)
+  limit 1;
+
+  if invitation_record.id is null then
+    raise exception 'Invitación inválida, vencida o para otro email';
+  end if;
+
+  insert into public.workspace_members (workspace_id, user_id, role)
+  values (invitation_record.workspace_id, auth.uid(), 'member')
+  on conflict (workspace_id, user_id) do nothing;
+
+  update public.invitations
+  set status = 'accepted', updated_at = now()
+  where id = invitation_record.id;
+
+  return invitation_record.workspace_id;
+end;
+$$;
+
 alter table public.profiles enable row level security;
 alter table public.workspaces enable row level security;
 alter table public.workspace_members enable row level security;
@@ -444,9 +481,17 @@ create trigger comment_notification
 after insert on public.comments
 for each row execute function public.notify_comment();
 
-alter publication supabase_realtime add table public.tasks;
-alter publication supabase_realtime add table public.task_assignees;
-alter publication supabase_realtime add table public.comments;
-alter publication supabase_realtime add table public.subtasks;
-alter publication supabase_realtime add table public.notifications;
-alter publication supabase_realtime add table public.activity_log;
+do $$
+declare
+  table_name text;
+begin
+  foreach table_name in array array['tasks','task_assignees','comments','subtasks','notifications','activity_log'] loop
+    begin
+      execute format('alter publication supabase_realtime add table public.%I', table_name);
+    exception
+      when duplicate_object then null;
+      when undefined_object then null;
+    end;
+  end loop;
+end;
+$$;
