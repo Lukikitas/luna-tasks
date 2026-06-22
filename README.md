@@ -88,6 +88,7 @@ El proyecto está listo para Vercel:
 - Build command: `npm run build`
 - Output directory: `dist`
 - Variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+- Producción: https://luna-tasks.vercel.app
 
 `vercel.json` incluye rewrite a `/` para que la app funcione al recargar rutas.
 
