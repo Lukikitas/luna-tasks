@@ -345,14 +345,15 @@ function TasksApp({ auth, theme, setTheme }) {
     const name = form.get('name')
     if (!name) return
 
-    const { data, error } = await supabase.from('workspaces').insert({ name, owner_id: auth.session.user.id }).select().single()
+    const workspaceId = crypto.randomUUID()
+    const { error } = await supabase.from('workspaces').insert({ id: workspaceId, name, owner_id: auth.session.user.id })
     if (error) return alert(error.message)
 
-    await supabase.from('workspace_members').insert({ workspace_id: data.id, user_id: auth.session.user.id, role: 'owner' })
+    await supabase.from('workspace_members').insert({ workspace_id: workspaceId, user_id: auth.session.user.id, role: 'owner' })
     await Promise.all(
       DEFAULT_STATUSES.map((status, index) =>
         supabase.from('task_statuses').insert({
-          workspace_id: data.id,
+          workspace_id: workspaceId,
           name: status.name,
           color: status.color,
           position: index,
@@ -361,11 +362,11 @@ function TasksApp({ auth, theme, setTheme }) {
       ),
     )
     await supabase.from('labels').insert([
-      { workspace_id: data.id, name: 'Operaciones', color: '#2563eb' },
-      { workspace_id: data.id, name: 'Urgente', color: '#dc2626' },
+      { workspace_id: workspaceId, name: 'Operaciones', color: '#2563eb' },
+      { workspace_id: workspaceId, name: 'Urgente', color: '#dc2626' },
     ])
     await loadWorkspaces()
-    setWorkspaceId(data.id)
+    setWorkspaceId(workspaceId)
   }
 
   async function createInvite() {
