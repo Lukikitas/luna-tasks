@@ -2,7 +2,7 @@
 
 ## Estado actual
 
-Aplicacion base implementada localmente y subida a GitHub. La app compila, el lint pasa limpio y el servidor local responde. La configuracion real de Supabase y Vercel sigue bloqueada por autenticacion externa o token de acceso.
+Aplicacion base implementada localmente, subida a GitHub y conectada a Supabase. La app compila, el lint pasa limpio y Supabase responde con el schema aplicado. El despliegue en Vercel sigue bloqueado por autenticacion externa o token de acceso.
 
 ## Funciones terminadas
 
@@ -25,9 +25,8 @@ Aplicacion base implementada localmente y subida a GitHub. La app compila, el li
 
 ## Funciones pendientes
 
-- Autenticar Supabase CLI con `SUPABASE_ACCESS_TOKEN` o login interactivo.
-- Crear proyecto Supabase real y ejecutar `supabase/schema.sql`.
-- Cargar variables reales en `.env` local y en Vercel.
+- Autenticar Supabase CLI con `SUPABASE_ACCESS_TOKEN` o login interactivo si se quiere administrar Supabase por CLI.
+- Cargar variables reales en Vercel.
 - Probar registro/login contra Supabase.
 - Probar realtime con dos sesiones reales.
 - Crear bucket privado para adjuntos si se habilita subida de archivos.
@@ -48,12 +47,13 @@ Aplicacion base implementada localmente y subida a GitHub. La app compila, el li
 - Supabase CLI no permite login automatico en entorno no TTY: requiere `supabase login --token` o `SUPABASE_ACCESS_TOKEN`.
 - Vercel CLI queda esperando login interactivo; requiere sesion o `VERCEL_TOKEN`.
 - Repositorio GitHub creado y remoto local conectado: `https://github.com/Lukikitas/luna-tasks`.
+- Supabase configurado con `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` en `.env` local; las tablas principales responden con anon key.
 - Las notificaciones de vencimiento cercano requieren una tarea programada o Edge Function en una segunda etapa.
 - Adjuntos estan modelados en base de datos, pero la UI de subida queda pendiente hasta crear el bucket de Storage.
 
 ## Proximos pasos
 
-1. Completar autenticacion de Supabase y Vercel CLI o tokens locales.
-2. Crear/configurar Supabase.
-3. Probar funciones reales con `.env`.
+1. Completar autenticacion de Vercel CLI o configurar el proyecto desde Vercel web.
+2. Cargar variables `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` en Vercel.
+3. Probar registro/login contra Supabase.
 4. Desplegar en Vercel y verificar PC/celular.
