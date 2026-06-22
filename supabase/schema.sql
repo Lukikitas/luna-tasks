@@ -74,6 +74,23 @@ create table if not exists public.task_assignees (
   primary key (task_id, user_id)
 );
 
+create table if not exists public.responsibles (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  name text not null,
+  color text not null default '#2563eb',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (workspace_id, name)
+);
+
+create table if not exists public.task_responsibles (
+  task_id uuid not null references public.tasks(id) on delete cascade,
+  responsible_id uuid not null references public.responsibles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (task_id, responsible_id)
+);
+
 create table if not exists public.labels (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces(id) on delete cascade,
@@ -150,6 +167,7 @@ create index if not exists idx_members_workspace on public.workspace_members(wor
 create index if not exists idx_tasks_workspace on public.tasks(workspace_id);
 create index if not exists idx_tasks_status on public.tasks(status_id);
 create index if not exists idx_tasks_due on public.tasks(due_date);
+create index if not exists idx_responsibles_workspace on public.responsibles(workspace_id);
 create index if not exists idx_comments_task on public.comments(task_id);
 create index if not exists idx_notifications_user on public.notifications(user_id, read_at);
 create index if not exists idx_activity_workspace on public.activity_log(workspace_id, created_at desc);
@@ -191,7 +209,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['profiles','workspaces','invitations','task_statuses','tasks','labels','subtasks','comments'] loop
+  foreach t in array array['profiles','workspaces','invitations','task_statuses','tasks','responsibles','labels','subtasks','comments'] loop
     execute format('drop trigger if exists set_%I_updated_at on public.%I', t, t);
     execute format('create trigger set_%I_updated_at before update on public.%I for each row execute function public.set_updated_at()', t, t);
   end loop;
@@ -235,6 +253,16 @@ set search_path = public
 language sql
 as $$
   select workspace_id from public.tasks where id = target_task_id;
+$$;
+
+create or replace function public.responsible_workspace_id(target_responsible_id uuid)
+returns uuid
+stable
+security definer
+set search_path = public
+language sql
+as $$
+  select workspace_id from public.responsibles where id = target_responsible_id;
 $$;
 
 create or replace function public.accept_workspace_invitation(invite_token uuid)
@@ -281,6 +309,8 @@ alter table public.invitations enable row level security;
 alter table public.task_statuses enable row level security;
 alter table public.tasks enable row level security;
 alter table public.task_assignees enable row level security;
+alter table public.responsibles enable row level security;
+alter table public.task_responsibles enable row level security;
 alter table public.labels enable row level security;
 alter table public.task_labels enable row level security;
 alter table public.subtasks enable row level security;
@@ -317,6 +347,10 @@ for insert with check (owner_id = auth.uid());
 drop policy if exists "workspaces_update_admins" on public.workspaces;
 create policy "workspaces_update_admins" on public.workspaces
 for update using (public.is_workspace_admin(id)) with check (public.is_workspace_admin(id));
+
+drop policy if exists "workspaces_delete_admins" on public.workspaces;
+create policy "workspaces_delete_admins" on public.workspaces
+for delete using (public.is_workspace_admin(id));
 
 drop policy if exists "members_select_members" on public.workspace_members;
 create policy "members_select_members" on public.workspace_members
@@ -361,6 +395,21 @@ drop policy if exists "task_assignees_all_members" on public.task_assignees;
 create policy "task_assignees_all_members" on public.task_assignees
 for all using (public.is_workspace_member(public.task_workspace_id(task_id)))
 with check (public.is_workspace_member(public.task_workspace_id(task_id)));
+
+drop policy if exists "responsibles_all_members" on public.responsibles;
+create policy "responsibles_all_members" on public.responsibles
+for all using (public.is_workspace_member(workspace_id)) with check (public.is_workspace_member(workspace_id));
+
+drop policy if exists "task_responsibles_all_members" on public.task_responsibles;
+create policy "task_responsibles_all_members" on public.task_responsibles
+for all using (
+  public.is_workspace_member(public.task_workspace_id(task_id))
+  and public.task_workspace_id(task_id) = public.responsible_workspace_id(responsible_id)
+)
+with check (
+  public.is_workspace_member(public.task_workspace_id(task_id))
+  and public.task_workspace_id(task_id) = public.responsible_workspace_id(responsible_id)
+);
 
 drop policy if exists "labels_all_members" on public.labels;
 create policy "labels_all_members" on public.labels
@@ -485,7 +534,7 @@ do $$
 declare
   table_name text;
 begin
-  foreach table_name in array array['tasks','task_assignees','comments','subtasks','notifications','activity_log'] loop
+  foreach table_name in array array['tasks','task_assignees','responsibles','task_responsibles','comments','subtasks','notifications','activity_log'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', table_name);
     exception

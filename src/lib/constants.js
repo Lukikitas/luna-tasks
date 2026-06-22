@@ -14,6 +14,7 @@ export const PRIORITIES = [
 ]
 
 export const VIEW_OPTIONS = [
+  { id: 'dashboard', label: 'Dashboard' },
   { id: 'board', label: 'Kanban' },
   { id: 'list', label: 'Lista' },
   { id: 'calendar', label: 'Calendario' },

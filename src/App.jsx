@@ -10,7 +10,6 @@ import {
 } from '@dnd-kit/core'
 import {
   SortableContext,
-  arrayMove,
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
@@ -185,6 +184,7 @@ function TasksApp({ auth, theme, setTheme }) {
   const [workspaces, setWorkspaces] = useState([])
   const [workspaceId, setWorkspaceId] = useState('')
   const [members, setMembers] = useState([])
+  const [responsibles, setResponsibles] = useState([])
   const [statuses, setStatuses] = useState([])
   const [tasks, setTasks] = useState([])
   const [labels, setLabels] = useState([])
@@ -226,13 +226,16 @@ function TasksApp({ auth, theme, setTheme }) {
 
   async function loadWorkspaceData(id = workspaceId) {
     if (!id) return
-    const [memberRes, statusRes, taskRes, labelRes, commentRes, subtaskRes, notificationRes, activityRes] =
+    const [memberRes, responsibleRes, statusRes, taskRes, labelRes, commentRes, subtaskRes, notificationRes, activityRes] =
       await Promise.all([
         supabase.from('workspace_members').select('*, profile:profiles(*)').eq('workspace_id', id),
+        supabase.from('responsibles').select('*').eq('workspace_id', id).order('name'),
         supabase.from('task_statuses').select('*').eq('workspace_id', id).order('position'),
         supabase
           .from('tasks')
-          .select('*, creator:profiles!tasks_creator_id_fkey(*), assignees:task_assignees(profile:profiles(*)), task_labels(label:labels(*))')
+          .select(
+            '*, creator:profiles!tasks_creator_id_fkey(*), assignees:task_assignees(profile:profiles(*)), task_responsibles(responsible:responsibles(*)), task_labels(label:labels(*))',
+          )
           .eq('workspace_id', id)
           .order('position'),
         supabase.from('labels').select('*').eq('workspace_id', id).order('name'),
@@ -243,8 +246,18 @@ function TasksApp({ auth, theme, setTheme }) {
       ])
 
     if (!memberRes.error) setMembers(memberRes.data)
+    if (!responsibleRes.error) setResponsibles(responsibleRes.data)
     if (!statusRes.error) setStatuses(statusRes.data)
-    if (!taskRes.error) setTasks(taskRes.data)
+    if (!taskRes.error) {
+      setTasks(taskRes.data)
+    } else {
+      const fallbackTaskRes = await supabase
+        .from('tasks')
+        .select('*, creator:profiles!tasks_creator_id_fkey(*), assignees:task_assignees(profile:profiles(*)), task_labels(label:labels(*))')
+        .eq('workspace_id', id)
+        .order('position')
+      if (!fallbackTaskRes.error) setTasks(fallbackTaskRes.data)
+    }
     if (!labelRes.error) setLabels(labelRes.data)
     if (!commentRes.error) setComments(commentRes.data)
     if (!subtaskRes.error) setSubtasks(subtaskRes.data)
@@ -291,6 +304,10 @@ function TasksApp({ auth, theme, setTheme }) {
         loadWorkspaceData(workspaceId),
       )
       .on('postgres_changes', { event: '*', schema: 'public', table: 'task_assignees' }, () => loadWorkspaceData(workspaceId))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'responsibles', filter: `workspace_id=eq.${workspaceId}` }, () =>
+        loadWorkspaceData(workspaceId),
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'task_responsibles' }, () => loadWorkspaceData(workspaceId))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'subtasks', filter: `workspace_id=eq.${workspaceId}` }, () =>
         loadWorkspaceData(workspaceId),
       )
@@ -308,6 +325,7 @@ function TasksApp({ auth, theme, setTheme }) {
   const visibleTasks = useMemo(() => {
     return tasks.filter((task) => {
       const assigneeIds = task.assignees?.map((item) => item.profile?.id).filter(Boolean) ?? []
+      const responsibleIds = task.task_responsibles?.map((item) => item.responsible?.id).filter(Boolean) ?? []
       const taskLabelIds = task.task_labels?.map((item) => item.label?.id).filter(Boolean) ?? []
       const haystack = `${task.title} ${task.description ?? ''}`.toLowerCase()
       const overdue = isOverdue(task, statusById[task.status_id])
@@ -316,12 +334,13 @@ function TasksApp({ auth, theme, setTheme }) {
       if (view === 'done' && task.status_id !== doneStatus?.id) return false
       if (filters.text && !haystack.includes(filters.text.toLowerCase())) return false
       if (filters.status !== 'all' && task.status_id !== filters.status) return false
-      if (filters.assignee !== 'all' && !assigneeIds.includes(filters.assignee)) return false
+      if (filters.assignee.startsWith('member:') && !assigneeIds.includes(filters.assignee.replace('member:', ''))) return false
+      if (filters.assignee.startsWith('person:') && !responsibleIds.includes(filters.assignee.replace('person:', ''))) return false
       if (filters.priority !== 'all' && task.priority !== filters.priority) return false
       if (filters.label !== 'all' && !taskLabelIds.includes(filters.label)) return false
       if (filters.creator !== 'all' && task.creator_id !== filters.creator) return false
       if (filters.overdue && !overdue) return false
-      if (filters.unassigned && assigneeIds.length > 0) return false
+      if (filters.unassigned && (assigneeIds.length > 0 || responsibleIds.length > 0)) return false
       return true
     })
   }, [tasks, filters, view, statusById, doneStatus, auth.session.user.id])
@@ -365,8 +384,25 @@ function TasksApp({ auth, theme, setTheme }) {
       { workspace_id: workspaceId, name: 'Operaciones', color: '#2563eb' },
       { workspace_id: workspaceId, name: 'Urgente', color: '#dc2626' },
     ])
+    await supabase.from('responsibles').insert({ workspace_id: workspaceId, name: auth.profile?.display_name || auth.session.user.email, color: '#0f766e' })
     await loadWorkspaces()
     setWorkspaceId(workspaceId)
+  }
+
+  async function deleteWorkspace() {
+    const workspace = workspaces.find((item) => item.id === workspaceId)
+    if (!workspace) return
+    if (workspace.role !== 'owner' && workspace.role !== 'admin') return alert('Solo un owner o admin puede borrar este espacio.')
+    if (!confirm(`¿Borrar el espacio "${workspace.name}" y todas sus tareas?`)) return
+    const confirmation = prompt('Escribí BORRAR para confirmar')
+    if (confirmation !== 'BORRAR') return
+
+    const { error } = await supabase.from('workspaces').delete().eq('id', workspaceId)
+    if (error) return alert(error.message)
+
+    const remaining = workspaces.filter((item) => item.id !== workspaceId)
+    setWorkspaces(remaining)
+    setWorkspaceId(remaining[0]?.id || '')
   }
 
   async function createInvite() {
@@ -417,6 +453,23 @@ function TasksApp({ auth, theme, setTheme }) {
     setSelectedTask(null)
   }
 
+  async function createResponsible(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const name = form.get('name')
+    if (!name || !workspaceId) return
+    const { error } = await supabase.from('responsibles').insert({ workspace_id: workspaceId, name, color: '#2563eb' })
+    if (error) return alert(error.message)
+    event.currentTarget.reset()
+    loadWorkspaceData(workspaceId)
+  }
+
+  async function toggleSubtask(subtask) {
+    const { error } = await supabase.from('subtasks').update({ is_done: !subtask.is_done }).eq('id', subtask.id)
+    if (error) return alert(error.message)
+    loadWorkspaceData(workspaceId)
+  }
+
   async function createStatus() {
     const name = prompt('Nombre del nuevo estado')
     if (!name) return
@@ -455,14 +508,25 @@ function TasksApp({ auth, theme, setTheme }) {
     const nextStatusId = findStatusFromOver(over)
     if (!task || !nextStatusId) return
 
-    const sameColumnTasks = tasks.filter((item) => item.status_id === nextStatusId).sort(byPosition)
-    const oldIndex = sameColumnTasks.findIndex((item) => item.id === active.id)
-    const newIndex = sameColumnTasks.findIndex((item) => item.id === over.id)
-    const reordered =
-      oldIndex >= 0 && newIndex >= 0 ? arrayMove(sameColumnTasks, oldIndex, newIndex) : [...sameColumnTasks, { ...task, status_id: nextStatusId }]
+    const sourceStatusId = task.status_id
+    const columnTasks = tasks
+      .filter((item) => item.status_id === nextStatusId && item.id !== active.id)
+      .sort(byPosition)
+    const overIndex = columnTasks.findIndex((item) => item.id === over.id)
+    const insertIndex = overIndex >= 0 ? overIndex : columnTasks.length
+    const reordered = [...columnTasks]
+    reordered.splice(insertIndex, 0, { ...task, status_id: nextStatusId })
 
-    await updateTask(task.id, { status_id: nextStatusId, position: Math.max(newIndex, 0) })
+    await updateTask(task.id, { status_id: nextStatusId, position: insertIndex })
     await Promise.all(reordered.map((item, index) => supabase.from('tasks').update({ position: index }).eq('id', item.id)))
+    if (sourceStatusId !== nextStatusId) {
+      await Promise.all(
+        tasks
+          .filter((item) => item.status_id === sourceStatusId && item.id !== active.id)
+          .sort(byPosition)
+          .map((item, index) => supabase.from('tasks').update({ position: index }).eq('id', item.id)),
+      )
+    }
   }
 
   if (!workspaceId) return <EmptyWorkspace onCreate={createWorkspace} auth={auth} />
@@ -496,6 +560,10 @@ function TasksApp({ auth, theme, setTheme }) {
           <UserPlus size={17} />
           Invitar
         </button>
+        <button className="danger-nav" onClick={deleteWorkspace}>
+          <Trash2 size={17} />
+          Borrar espacio
+        </button>
         <form onSubmit={createWorkspace} className="mini-form">
           <input name="name" placeholder="Nuevo espacio" />
           <button title="Crear espacio">
@@ -523,26 +591,32 @@ function TasksApp({ auth, theme, setTheme }) {
           </div>
         </header>
 
-        <Dashboard metrics={metrics} tasks={tasks} members={members} statusById={statusById} />
-        <Filters filters={filters} setFilters={setFilters} statuses={statuses} members={members} labels={labels} />
-
-        <section className="content-grid">
-          <div className="workspace-panel">
-            <div className="section-title">
-              <Users size={18} />
-              Miembros
-            </div>
-            <div className="member-list">
-              {members.map((member) => (
-                <span key={member.id} className="member-chip">
-                  <Avatar profile={member.profile} />
-                  {member.profile?.display_name || member.profile?.email}
-                </span>
-              ))}
-            </div>
-          </div>
-          <NotificationsPanel notifications={notifications} />
-        </section>
+        {view === 'dashboard' ? (
+          <>
+            <Dashboard metrics={metrics} tasks={tasks} responsibles={responsibles} statusById={statusById} />
+            <section className="content-grid">
+              <div className="workspace-panel">
+                <div className="section-title">
+                  <Users size={18} />
+                  Miembros
+                </div>
+                <div className="member-list">
+                  {members.map((member) => (
+                    <span key={member.id} className="member-chip">
+                      <Avatar profile={member.profile} />
+                      {member.profile?.display_name || member.profile?.email}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <ResponsiblesPanel responsibles={responsibles} onCreateResponsible={createResponsible} />
+              <NotificationsPanel notifications={notifications} />
+            </section>
+            <ActivityPanel activity={activity} />
+          </>
+        ) : (
+          <Filters filters={filters} setFilters={setFilters} statuses={statuses} members={members} responsibles={responsibles} labels={labels} />
+        )}
 
         {view === 'board' ? (
           <DndContext
@@ -562,6 +636,8 @@ function TasksApp({ auth, theme, setTheme }) {
                   onEditStatus={setEditingStatus}
                   onDeleteStatus={deleteStatus}
                   statusById={statusById}
+                  subtasks={subtasks}
+                  onToggleSubtask={toggleSubtask}
                 />
               ))}
               <button className="add-column" onClick={createStatus}>
@@ -569,13 +645,19 @@ function TasksApp({ auth, theme, setTheme }) {
                 Nuevo estado
               </button>
             </section>
-            <DragOverlay>{activeTask ? <TaskCard task={activeTask} statusById={statusById} /> : null}</DragOverlay>
+            <DragOverlay>
+              {activeTask ? (
+                <TaskCard
+                  task={activeTask}
+                  statusById={statusById}
+                  subtasks={subtasks.filter((subtask) => subtask.task_id === activeTask.id)}
+                />
+              ) : null}
+            </DragOverlay>
           </DndContext>
-        ) : (
+        ) : view !== 'dashboard' ? (
           <AlternateView view={view} tasks={visibleTasks} statuses={statuses} statusById={statusById} onOpenTask={setSelectedTask} />
-        )}
-
-        <ActivityPanel activity={activity} />
+        ) : null}
       </main>
 
       {sidebarOpen && <button className="scrim" onClick={() => setSidebarOpen(false)} />}
@@ -585,6 +667,7 @@ function TasksApp({ auth, theme, setTheme }) {
           statuses={statuses}
           members={members}
           labels={labels}
+          responsibles={responsibles}
           comments={comments.filter((comment) => comment.task_id === selectedTask.id)}
           subtasks={subtasks.filter((subtask) => subtask.task_id === selectedTask.id)}
           auth={auth}
@@ -637,7 +720,7 @@ function ProfileButton({ auth }) {
   )
 }
 
-function Dashboard({ metrics, tasks, members, statusById }) {
+function Dashboard({ metrics, tasks, responsibles, statusById }) {
   const upcoming = [...tasks]
     .filter((task) => task.due_date)
     .sort((a, b) => a.due_date.localeCompare(b.due_date))
@@ -684,11 +767,13 @@ function Dashboard({ metrics, tasks, members, statusById }) {
       </div>
       <div className="insight-panel">
         <div className="section-title">Por responsable</div>
-        {members.map((member) => (
-          <span key={member.id}>
-            {member.profile?.display_name || member.profile?.email}: {tasks.filter((task) => task.assignees?.some((a) => a.profile?.id === member.user_id)).length}
+        {responsibles.map((responsible) => (
+          <span key={responsible.id}>
+            <i style={{ background: responsible.color }} />
+            {responsible.name}: {tasks.filter((task) => task.task_responsibles?.some((item) => item.responsible?.id === responsible.id)).length}
           </span>
         ))}
+        {!responsibles.length && <span>Sin responsables cargados</span>}
       </div>
     </section>
   )
@@ -704,7 +789,7 @@ function Metric({ title, value, icon, tone }) {
   )
 }
 
-function Filters({ filters, setFilters, statuses, members, labels }) {
+function Filters({ filters, setFilters, statuses, members, responsibles, labels }) {
   return (
     <section className="filters">
       <label className="search-box">
@@ -725,9 +810,14 @@ function Filters({ filters, setFilters, statuses, members, labels }) {
       </SelectFilter>
       <SelectFilter label="Responsable" value={filters.assignee} onChange={(assignee) => setFilters({ ...filters, assignee })}>
         <option value="all">Todos</option>
+        {responsibles.map((responsible) => (
+          <option key={responsible.id} value={`person:${responsible.id}`}>
+            {responsible.name}
+          </option>
+        ))}
         {members.map((member) => (
-          <option key={member.user_id} value={member.user_id}>
-            {member.profile?.display_name || member.profile?.email}
+          <option key={member.user_id} value={`member:${member.user_id}`}>
+            Miembro: {member.profile?.display_name || member.profile?.email}
           </option>
         ))}
       </SelectFilter>
@@ -769,7 +859,7 @@ function SelectFilter({ label, value, onChange, children }) {
   )
 }
 
-function KanbanColumn({ status, tasks, onCreateTask, onOpenTask, onEditStatus, onDeleteStatus, statusById }) {
+function KanbanColumn({ status, tasks, onCreateTask, onOpenTask, onEditStatus, onDeleteStatus, statusById, subtasks, onToggleSubtask }) {
   const { setNodeRef, isOver } = useDroppable({ id: status.id })
   return (
     <section ref={setNodeRef} className={clsx('kanban-column', isOver && 'over')}>
@@ -792,7 +882,14 @@ function KanbanColumn({ status, tasks, onCreateTask, onOpenTask, onEditStatus, o
       <SortableContext items={tasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
         <div className="task-stack">
           {tasks.map((task) => (
-            <SortableTask key={task.id} task={task} onOpenTask={onOpenTask} statusById={statusById} />
+            <SortableTask
+              key={task.id}
+              task={task}
+              onOpenTask={onOpenTask}
+              statusById={statusById}
+              subtasks={subtasks.filter((subtask) => subtask.task_id === task.id)}
+              onToggleSubtask={onToggleSubtask}
+            />
           ))}
           {!tasks.length && <div className="empty-state">Sin tareas en este estado</div>}
         </div>
@@ -801,7 +898,7 @@ function KanbanColumn({ status, tasks, onCreateTask, onOpenTask, onEditStatus, o
   )
 }
 
-function SortableTask({ task, onOpenTask, statusById }) {
+function SortableTask({ task, onOpenTask, statusById, subtasks, onToggleSubtask }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
   return (
     <article
@@ -812,14 +909,15 @@ function SortableTask({ task, onOpenTask, statusById }) {
       {...attributes}
       {...listeners}
     >
-      <TaskCard task={task} statusById={statusById} />
+      <TaskCard task={task} statusById={statusById} subtasks={subtasks} onToggleSubtask={onToggleSubtask} />
     </article>
   )
 }
 
-function TaskCard({ task, statusById }) {
+function TaskCard({ task, statusById, subtasks = [], onToggleSubtask }) {
   const priority = priorityMeta(task.priority)
   const overdue = isOverdue(task, statusById[task.status_id])
+  const visibleSubtasks = subtasks.slice(0, 3)
   return (
     <>
       <div className="task-card-head">
@@ -836,11 +934,33 @@ function TaskCard({ task, statusById }) {
           {formatDate(task.due_date)}
         </span>
         <span className="avatar-group">
-          {task.assignees?.length
-            ? task.assignees.map((assignee) => <Avatar key={assignee.profile?.id} profile={assignee.profile} />)
+          {task.task_responsibles?.length
+            ? task.task_responsibles.map((item) => (
+                <span key={item.responsible?.id} className="responsible-dot" style={{ '--responsible': item.responsible?.color }}>
+                  {item.responsible?.name}
+                </span>
+              ))
+            : task.assignees?.length
+              ? task.assignees.map((assignee) => <Avatar key={assignee.profile?.id} profile={assignee.profile} />)
             : 'Sin responsable'}
         </span>
       </div>
+      {!!visibleSubtasks.length && (
+        <div className="card-checklist">
+          {visibleSubtasks.map((subtask) => (
+            <label key={subtask.id} onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+              <input
+                type="checkbox"
+                checked={subtask.is_done}
+                onChange={() => onToggleSubtask?.(subtask)}
+                disabled={!onToggleSubtask}
+              />
+              <span>{subtask.title}</span>
+            </label>
+          ))}
+          {subtasks.length > visibleSubtasks.length && <small>+{subtasks.length - visibleSubtasks.length} más</small>}
+        </div>
+      )}
       <div className="label-row">
         {task.task_labels?.map((item) => (
           <span key={item.label?.id} style={{ '--label': item.label?.color }}>
@@ -903,6 +1023,31 @@ function NotificationsPanel({ notifications }) {
   )
 }
 
+function ResponsiblesPanel({ responsibles, onCreateResponsible }) {
+  return (
+    <div className="workspace-panel">
+      <div className="section-title">
+        <Users size={18} />
+        Responsables
+      </div>
+      <div className="responsible-list">
+        {responsibles.map((responsible) => (
+          <span key={responsible.id} className="responsible-chip" style={{ '--responsible': responsible.color }}>
+            {responsible.name}
+          </span>
+        ))}
+        {!responsibles.length && <span className="muted-text">Sin responsables cargados</span>}
+      </div>
+      <form onSubmit={onCreateResponsible} className="mini-form responsible-form">
+        <input name="name" placeholder="Nuevo responsable" required />
+        <button title="Crear responsable">
+          <Plus size={16} />
+        </button>
+      </form>
+    </div>
+  )
+}
+
 function ActivityPanel({ activity }) {
   return (
     <section className="activity-panel">
@@ -923,9 +1068,10 @@ function ActivityPanel({ activity }) {
   )
 }
 
-function TaskDrawer({ task, statuses, members, labels, comments, subtasks, auth, onClose, onUpdate, onDelete, onReload, workspaceId }) {
+function TaskDrawer({ task, statuses, members, labels, responsibles, comments, subtasks, auth, onClose, onUpdate, onDelete, onReload, workspaceId }) {
   const [draft, setDraft] = useState(task)
   const assignedIds = task.assignees?.map((item) => item.profile?.id) ?? []
+  const responsibleIds = task.task_responsibles?.map((item) => item.responsible?.id) ?? []
   const taskLabelIds = task.task_labels?.map((item) => item.label?.id) ?? []
 
   useEffect(() => setDraft(task), [task])
@@ -947,6 +1093,15 @@ function TaskDrawer({ task, statuses, members, labels, comments, subtasks, auth,
       await supabase.from('task_assignees').delete().eq('task_id', task.id).eq('user_id', userId)
     } else {
       await supabase.from('task_assignees').insert({ task_id: task.id, user_id: userId })
+    }
+    onReload()
+  }
+
+  async function toggleResponsible(responsibleId) {
+    if (responsibleIds.includes(responsibleId)) {
+      await supabase.from('task_responsibles').delete().eq('task_id', task.id).eq('responsible_id', responsibleId)
+    } else {
+      await supabase.from('task_responsibles').insert({ task_id: task.id, responsible_id: responsibleId })
     }
     onReload()
   }
@@ -1034,6 +1189,22 @@ function TaskDrawer({ task, statuses, members, labels, comments, subtasks, auth,
 
       <section className="drawer-section">
         <h3>Responsables</h3>
+        <div className="chip-grid">
+          {responsibles.map((responsible) => (
+            <button
+              key={responsible.id}
+              className={clsx(responsibleIds.includes(responsible.id) && 'active')}
+              onClick={() => toggleResponsible(responsible.id)}
+            >
+              <span className="responsible-dot" style={{ '--responsible': responsible.color }} />
+              {responsible.name}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="drawer-section">
+        <h3>Miembros reales</h3>
         <div className="chip-grid">
           {members.map((member) => (
             <button key={member.user_id} className={clsx(assignedIds.includes(member.user_id) && 'active')} onClick={() => toggleAssignee(member.user_id)}>

@@ -258,6 +258,10 @@ textarea {
   text-align: left;
 }
 
+.sidebar .danger-nav {
+  color: var(--danger);
+}
+
 .mini-form,
 .inline-form {
   display: grid;
@@ -478,6 +482,7 @@ img.avatar {
 }
 
 .member-list,
+.responsible-list,
 .mini-list,
 .activity-list,
 .label-row {
@@ -493,6 +498,42 @@ img.avatar {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 5px 9px 5px 5px;
+}
+
+.responsible-list {
+  margin-bottom: 12px;
+}
+
+.responsible-chip,
+.responsible-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.responsible-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-weight: 800;
+}
+
+.responsible-chip::before,
+.responsible-dot::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  background: var(--responsible);
+}
+
+.responsible-form {
+  margin-top: 10px;
+}
+
+.muted-text {
+  color: var(--muted);
 }
 
 .mini-list span,
@@ -617,6 +658,56 @@ img.avatar {
 
 .avatar-group {
   justify-content: flex-end;
+  flex-wrap: wrap;
+  text-align: right;
+}
+
+.task-card .responsible-dot {
+  max-width: 128px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.card-checklist {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.card-checklist label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.card-checklist input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.card-checklist span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-checklist small {
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .label-row {
