@@ -2,7 +2,7 @@
 
 ## Estado actual
 
-Aplicacion base implementada localmente. La app compila, el lint pasa limpio y el servidor local responde. La configuracion real de Supabase, GitHub remoto y Vercel esta bloqueada por autenticacion externa o token de acceso.
+Aplicacion base implementada localmente y subida a GitHub. La app compila, el lint pasa limpio y el servidor local responde. La configuracion real de Supabase y Vercel sigue bloqueada por autenticacion externa o token de acceso.
 
 ## Funciones terminadas
 
@@ -31,7 +31,6 @@ Aplicacion base implementada localmente. La app compila, el lint pasa limpio y e
 - Probar registro/login contra Supabase.
 - Probar realtime con dos sesiones reales.
 - Crear bucket privado para adjuntos si se habilita subida de archivos.
-- Crear repositorio GitHub y push.
 - Desplegar en Vercel.
 - Agregar capturas si Lucas las quiere en el README.
 
@@ -48,14 +47,13 @@ Aplicacion base implementada localmente. La app compila, el lint pasa limpio y e
 
 - Supabase CLI no permite login automatico en entorno no TTY: requiere `supabase login --token` o `SUPABASE_ACCESS_TOKEN`.
 - Vercel CLI queda esperando login interactivo; requiere sesion o `VERCEL_TOKEN`.
-- GitHub esta autenticado por conector como `Lukikitas`, pero no hay herramienta disponible para crear repositorios nuevos desde ese conector.
+- Repositorio GitHub creado y remoto local conectado: `https://github.com/Lukikitas/luna-tasks`.
 - Las notificaciones de vencimiento cercano requieren una tarea programada o Edge Function en una segunda etapa.
 - Adjuntos estan modelados en base de datos, pero la UI de subida queda pendiente hasta crear el bucket de Storage.
 
 ## Proximos pasos
 
-1. Completar autenticacion de Supabase, Vercel y GitHub CLI o tokens locales.
+1. Completar autenticacion de Supabase y Vercel CLI o tokens locales.
 2. Crear/configurar Supabase.
 3. Probar funciones reales con `.env`.
-4. Crear remoto GitHub y subir.
-5. Desplegar en Vercel y verificar PC/celular.
+4. Desplegar en Vercel y verificar PC/celular.
